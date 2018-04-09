@@ -1,3 +1,7 @@
 theme: jekyll-theme-cayman
 title: Data Science Projects
 description: Daniel Sharp
+author:
+	name: Daniel Sharp
+	email: dsharpc@gmail.com
+	github: dsharpc
