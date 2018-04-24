@@ -8,4 +8,4 @@ You can also read my CV [here](https://uptowork.com/mycv/daniel-sharp)
   
 * [Visualizing crime in Mexico City](mexico_crime/README.md)  
   
-* [test](mexico_crime/README.md)  
+* [test](SparkMLFlights/README.md)  
