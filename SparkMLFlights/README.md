@@ -5,11 +5,17 @@ Through this project, I will guide you around the use of Apache Spark's Machine 
 
 Our objective will be to predict a flight's departure delay with available data. To do this, we will use different models, tuned through a Parameter map with which we can try different parameter values and finally run through a 'Magic Loop' to try both of them out. Feature engineering, if required, will be done with a Pipeline object.
 
-Dataset used may be downloaded from here: https://www.kaggle.com/usdot/flight-delays  
-A glossary for the variables can be found here: https://www.transtats.bts.gov/DL_SelectFields.asp?Table_ID=236&DB_Short_Name=On-Time
+Dataset used may be downloaded from [here](https://www.kaggle.com/usdot/flight-delays)  
+A glossary for the variables can be found [here](https://www.transtats.bts.gov/DL_SelectFields.asp?Table_ID=236&DB_Short_Name=On-Time)
 
 ### Creating a Spark Session
-In this project will be working with Spark in 'local mode', this means we will only be using the resources in our computer for data processing, instead of using a cluster of machines, as Spark is more commonly used.
+In this project I scripted the code to test its proper functionality on my computer, using [jupyter's pyspark docker image](https://hub.docker.com/r/jupyter/all-spark-notebook/). After running all of my code locally and making sure there weren't any errors, I created a cluster on AWS' EMR with 4 r4.large instances which have 4 cores and 30 GBs RAM each. I also changed the following settings to Spark:  
+
+spark.executor.memory            20G  
+spark.executor.cores             4  
+spark.driver.memory              20G  
+
+The following script is as was run on the AWS cluster:
 
 
 ```python
@@ -26,11 +32,12 @@ import numpy as np
 import time
 pd.set_option('display.max_columns', 40)
 
-spark = SparkSession.builder.master("local[7]")\
-.config("spark.executor.memory", "10G")\
-.config("spark.driver.memory", "10G")\
-.config("spark.memory.fraction", ".8")\
-.getOrCreate() 
+# The following scripts are to start a SparkSession on local mode
+#spark = SparkSession.builder.master("local[*]")\
+#.config("spark.executor.memory", "10G")\
+#.config("spark.driver.memory", "10G")\
+#.config("spark.memory.fraction", ".8")\
+#.getOrCreate()
 # Using * within the box in local means we grant Spark access to all threads on our computer, this may be changed.
 ```
 
@@ -39,7 +46,7 @@ After this, we'll load the database into Spark and we'll take a first look at wh
 
 
 ```python
-flights = spark.read.csv('/home/jovyan/work/flights.csv', header =True) 
+flights = spark.read.csv('s3://daniel-sharp/datos/flights/flights.csv', header =True) 
 # read.csv has an argument 'inferSchema' which will try to parse columns to their 'appropiate' type. However,
 # here we avoid it as it produces unwanted results, such as parsing time "0005" to 5, which means we lose information
 # As it is, it will parse all columns to type 'string'
@@ -73,6 +80,19 @@ flights.limit(10).toPandas()
 
 
 <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
 <table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
@@ -468,6 +488,19 @@ flights.select([(count(when(isnan(c) | col(c).isNull(), c))/num_rows).alias(c) f
 
 
 <div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
 <table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
@@ -556,7 +589,7 @@ flights.withColumn("delay", flights["DEPARTURE_DELAY"].cast(DoubleType())).descr
     +-------+------------------+
     |  count|           5732926|
     |   mean| 9.370158275198389|
-    | stddev|37.080942496787124|
+    | stddev|37.080942496786925|
     |    min|             -82.0|
     |    max|            1988.0|
     +-------+------------------+
@@ -570,25 +603,17 @@ From the latter, we know the following changes can be made:
     + Departure Delay (our response variable)
     + Distance
     + Arrival delay
-    + Taxi Out
     + Scheduled time
-    + Elapsed time
-    + Air time
-    + Taxi in
-    + Diverted
-    + Cancelled  
-    
+    + Month
+    + Day of the week
+    + Day
  
-- Parse to time - will separate into two columns (hour and minute) which will probably be more useful when modeling -
+- Parse to time - where I will extract the hour  
    + Scheduled Departure
    + Departure time
-   + Wheels-off (When the plane actually left the ground)
-   + Wheels-on
    + Scheduled arrival
    + Arrival time
    + Scheduled Arrival  
-   
-  
    
 - Columns to delete - too many missing values -
     + Cancellation Reason
@@ -599,19 +624,22 @@ From the latter, we know the following changes can be made:
     + Weather Delay
     + Year (we know all our data is from 2015, so this column has no variance and thus is useless)  
     
-
 - Doubtful variables - may be redundant to other information (high correlation) & data leakage - 
     + Taxi in
     + Taxi out
     + Air time
     + Wheels on
     + Wheels off   
+    + Air time
+    + Diverted
+    + Cancelled
+    + Elapsed time
     
 I will also remove all remaining rows with Null values, which will represent 1.8% of the data at the most, which is insignificant.  
 
 It is also important to consider that some of these variables may produce **'data leakage'** as they could only be known after or along with the fact, for example: DEPARTURE_TIME, WHEELS_OFF, among others. We need to remove these variables for the same flight. 
 
-** Since we want to fit all these steps in a pipeline, we need to creates a series of classes that have a transform method within them. These are outlined next **
+**Since we want to fit all these steps in a pipeline, we need to creates a series of classes that have a transform method within them. These are outlined next:**
 
 
 
@@ -668,10 +696,12 @@ class rm_nulls(Transformer):
         return self
 ```
 
-It's important to note some variables aren't relevant for out prediction, such as those that happened after flight departure, eg. Arrival time at destination for flight of interest. However, this same variable might be relevant for our same flight's arrival previous to its departure time. We might be even interested in generating a 'time at airport' variable, which considers the time from landing to departure. 
+**Feature Engineering**  
 
-We can do this by lagging rows for every flight tail number. This way we can 'track' the specific airplanes.
+It's important to note some variables aren't relevant for out prediction, such as those that happened after flight departure, eg. Arrival time at destination for flight of interest. However, this same variable might be relevant for our same flight's arrival previous to its departure time. We might be even interested in generating a 'time at airport' variable, which considers the time from landing to departure. We can do this by lagging rows for every flight tail number. This way we can 'track' the specific airplanes.  
 
+Also, having categorical values such as Day and Time make our model much more complex as we would have to calculate n-1 parameters for each one. To avoid this, I will 'Bucketize' these columns into weeks and periods respectively. This way we can have week 1, week 2, week 3 and week 4 instead of days 1-31. This means our models will calculate 3 parameters instead of 30. The case for hours is analogous, I grouped the time variable into period of 4 hours each.  Unfortunately, doing this same exercise for the Aiports or Airlines variables is not possible. Maybe they could be categorized by cost-levels (maybe expecting cheaper airlines to be late more often), but I do not have that knowledge now. Airports could probably be categorized by regions, where maybe regions with more extreme weather face more delays.   
+  
 We work on this next: 
 
 
@@ -706,7 +736,7 @@ class t_diff(Transformer):
         return self
 ```
 
-Afterwards, we configure all the steps that will be used in out pipeline, which include removing columns with high number of null values and those that represent data leakage, lagging variables to get information on the airplanes previous flight and creating new variables, such as the time at airport variable. Finally, for use in our models, we have to 'One hot encode' our categorical variables.
+Afterwards, we configure all the steps that will be used in out pipeline, which include removing columns with high number of null values and those that represent data leakage, lagging variables to get information on the airplanes previous flight and creating new variables, such as the time at airport variable. Finally, for use in our models, we have to 'One Hot Encode' our categorical variables.
 
 
 ```python
@@ -740,6 +770,7 @@ h_m_sep = getHour(["SCHEDULED_DEPARTURE"])
 # Final parse of strings to ints for relevant variables
 double_maker2 = ParserDouble(["DEPARTURE_DELAY_PREV","SCHEDULED_DEPARTURE_HOUR", "DAY"])
 
+# Bucketize factor columns with many labels.
 bucketizer_day = Bucketizer(splits=[-float("inf"), 7, 14, 21, float("inf")], inputCol="DAY", outputCol="WEEK")
 bucketizer_time = Bucketizer(splits=[-float("inf"), 4, 8, 12, 16, 20, float("inf")], inputCol="SCHEDULED_DEPARTURE_HOUR",
                              outputCol="SCHED_DEPARTURE_PERIOD")
@@ -774,30 +805,189 @@ And now, our data is ready to be run through models!
 
 
 ```python
-clean_flights.limit(10).show()
+clean_flights.limit(10).toPandas()
 ```
 
-    +---------------+--------+--------------------+------------------+-------------------------+--------------+------------------+---------------+---------------+---------+--------------------------+
-    |DEPARTURE_DELAY|DISTANCE|DEPARTURE_DELAY_PREV|ARRIVAL_DELAY_PREV|SCHEDULED_TIME_AT_AIRPORT|   AIRLINE_HOT|ORIGIN_AIRPORT_HOT|      MONTH_HOT|DAY_OF_WEEK_HOT| WEEK_HOT|SCHED_DEPARTURE_PERIOD_HOT|
-    +---------------+--------+--------------------+------------------+-------------------------+--------------+------------------+---------------+---------------+---------+--------------------------+
-    |           82.0|   930.0|                -8.0|             -20.0|                    -86.0|(13,[8],[1.0])|  (627,[14],[1.0])|(11,[10],[1.0])|  (6,[0],[1.0])|(3,[],[])|             (5,[0],[1.0])|
-    |           81.0|   930.0|                82.0|              89.0|                     46.0|(13,[8],[1.0])|   (627,[9],[1.0])|(11,[10],[1.0])|  (6,[0],[1.0])|(3,[],[])|             (5,[1],[1.0])|
-    |           20.0|   650.0|                81.0|              70.0|                    296.0|(13,[8],[1.0])|  (627,[14],[1.0])|(11,[10],[1.0])|  (6,[0],[1.0])|(3,[],[])|             (5,[4],[1.0])|
-    |           -2.0|   650.0|                20.0|               1.0|                   1017.0|(13,[8],[1.0])|  (627,[24],[1.0])|(11,[10],[1.0])|  (6,[1],[1.0])|(3,[],[])|             (5,[0],[1.0])|
-    |           -4.0|   328.0|                -2.0|             -13.0|                    109.0|(13,[8],[1.0])|  (627,[14],[1.0])|(11,[10],[1.0])|  (6,[1],[1.0])|(3,[],[])|             (5,[0],[1.0])|
-    |            0.0|   328.0|                -4.0|              -7.0|                     45.0|(13,[8],[1.0])|  (627,[60],[1.0])|(11,[10],[1.0])|  (6,[1],[1.0])|(3,[],[])|             (5,[1],[1.0])|
-    |           13.0|   130.0|                 0.0|              -3.0|                    100.0|(13,[8],[1.0])|  (627,[14],[1.0])|(11,[10],[1.0])|  (6,[1],[1.0])|(3,[],[])|             (5,[2],[1.0])|
-    |           -7.0|   130.0|                13.0|              14.0|                     53.0|(13,[8],[1.0])|  (627,[43],[1.0])|(11,[10],[1.0])|  (6,[1],[1.0])|(3,[],[])|             (5,[2],[1.0])|
-    |            1.0|   650.0|                -7.0|             -16.0|                    108.0|(13,[8],[1.0])|  (627,[14],[1.0])|(11,[10],[1.0])|  (6,[1],[1.0])|(3,[],[])|             (5,[4],[1.0])|
-    |          148.0|  1013.0|                 1.0|              -8.0|                    -78.0|(13,[8],[1.0])|  (627,[24],[1.0])|(11,[10],[1.0])|  (6,[1],[1.0])|(3,[],[])|             (5,[4],[1.0])|
-    +---------------+--------+--------------------+------------------+-------------------------+--------------+------------------+---------------+---------------+---------+--------------------------+
-    
 
 
 
-```python
-from tabulate import tabulate
-```
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>DEPARTURE_DELAY</th>
+      <th>DISTANCE</th>
+      <th>DEPARTURE_DELAY_PREV</th>
+      <th>ARRIVAL_DELAY_PREV</th>
+      <th>SCHEDULED_TIME_AT_AIRPORT</th>
+      <th>AIRLINE_HOT</th>
+      <th>ORIGIN_AIRPORT_HOT</th>
+      <th>MONTH_HOT</th>
+      <th>DAY_OF_WEEK_HOT</th>
+      <th>WEEK_HOT</th>
+      <th>SCHED_DEPARTURE_PERIOD_HOT</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>-3.0</td>
+      <td>500.0</td>
+      <td>75.0</td>
+      <td>72.0</td>
+      <td>1389.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 1.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(1.0, 0.0, 0.0, 0.0, 0.0)</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>46.0</td>
+      <td>130.0</td>
+      <td>-3.0</td>
+      <td>-7.0</td>
+      <td>1006.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 1.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 1.0)</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>-6.0</td>
+      <td>130.0</td>
+      <td>46.0</td>
+      <td>36.0</td>
+      <td>817.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 1.0, 0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0, 1.0, 0.0)</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>-5.0</td>
+      <td>912.0</td>
+      <td>-6.0</td>
+      <td>-3.0</td>
+      <td>112.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 1.0, 0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0, 1.0, 0.0)</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>-10.0</td>
+      <td>912.0</td>
+      <td>-5.0</td>
+      <td>2.0</td>
+      <td>86.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 1.0, 0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(1.0, 0.0, 0.0, 0.0, 0.0)</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>67.0</td>
+      <td>912.0</td>
+      <td>-10.0</td>
+      <td>-17.0</td>
+      <td>-30.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 1.0, 0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(0.0, 1.0, 0.0, 0.0, 0.0)</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>41.0</td>
+      <td>912.0</td>
+      <td>67.0</td>
+      <td>51.0</td>
+      <td>86.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 1.0, 0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(0.0, 1.0, 0.0, 0.0, 0.0)</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>6.0</td>
+      <td>366.0</td>
+      <td>41.0</td>
+      <td>26.0</td>
+      <td>59.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 1.0, 0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 1.0, 0.0, 0.0)</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>0.0</td>
+      <td>366.0</td>
+      <td>6.0</td>
+      <td>3.0</td>
+      <td>927.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0, 1.0, 0.0)</td>
+    </tr>
+    <tr>
+      <th>9</th>
+      <td>-6.0</td>
+      <td>130.0</td>
+      <td>0.0</td>
+      <td>13.0</td>
+      <td>104.0</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ...</td>
+      <td>(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)</td>
+      <td>(0.0, 0.0, 0.0)</td>
+      <td>(1.0, 0.0, 0.0, 0.0, 0.0)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+
 
 And just to verify how much data we lost from Null values:
 
@@ -813,17 +1003,17 @@ And just to verify how much data we lost from Null values:
 
 
 
-We only lost 1.9% of our data to null values.  
+We only lost ~1.9% of our data to null values.  
 
 ### Running models and tuning  
 
-As stated at the beggining, our objetive is to find the best model to predict a flight's departure delay. This means we will try to predict a number and, thus, will need a regression model. In this case, we will work with two models: the standard Linear Regression Model and the GBT (Gradient Boosted Trees) Regressor Model.  
+As stated at the beggining, our objetive is to find the best model to predict a flight's departure delay. This means we will try to predict a number and, thus, will need a regression model. In this case, we will work with two models: the standard Linear Regression Model and the Random Forest model.  
 
 To start with, we have to divide our data in a training and a test sample, which we'll do 70% and 30% respectively. We can do a random split as we don't have sequential data to worry about
 
 
 ```python
-(train_flights, test_flights) = clean_flights.randomSplit([0.005, 0.995])
+(train_flights, test_flights) = clean_flights.randomSplit([0.70, 0.30])
 ```
 
 
@@ -841,8 +1031,8 @@ Instead of using 'for' loops for our Magic Loop, I adapted code from Bryan Cutle
 
 ```python
 # Define the base characteristics of the models we will use:
-lr = LinearRegression(maxIter=5, featuresCol='features', labelCol='label')
-rf = RandomForestRegressor(subsamplingRate=0.2, featuresCol='features', labelCol='label')
+lr = LinearRegression(maxIter=10, featuresCol='features', labelCol='label')
+rf = RandomForestRegressor(subsamplingRate=0.15, featuresCol='features', labelCol='label')
 
 # Spark ML models require you input a 'label' column and a 'features' column.
 # To do this, we use vector assembler, which produces a 'features' column where each record is a vector of our covariates
@@ -860,7 +1050,7 @@ paramGrid_lr = ParamGridBuilder() \
     
 paramGrid_rf = ParamGridBuilder() \
     .baseOn({pipeline.stages : [formula, rf]}) \
-    .addGrid(rf.numTrees, [5, 10, 15]) \
+    .addGrid(rf.numTrees, [10, 20, 30]) \
     .addGrid(rf.featureSubsetStrategy, ['onethird', '0.5', 'sqrt'])\
     .build()
     
@@ -874,7 +1064,7 @@ grids = paramGrid_rf + paramGrid_lr
 crossval = CrossValidator(estimatorParamMaps=grids,
                           estimator=pipeline,
                           evaluator=evaluator,
-                          numFolds=2,
+                          numFolds=10,
                          parallelism = 4)
 ```
 
@@ -884,15 +1074,22 @@ Here we fit out traning data to all our models. cvModel contains our best model 
 ```python
 start_time = time.time()
 cvModel = crossval.fit(train_flights)
-print("--- Magic Loop execution: %s seconds ---" % (time.time() - start_time))
+end_time = time.time()
 ```
 
-    --- Magic Loop execution: 1252.3645656108856 seconds ---
+
+```python
+print("--- Magic Loop execution: %s seconds ---" % (end_time - start_time))
+```
+
+    --- Magic Loop execution: 15658.50262594223 seconds ---
 
 
-Spark is more designed for production than for model exploration, which is why identifying model's performace isn't exactly straightforward, howevery, we can gather some details from our model runs:  
+Running the Magic Loop on the EMR cluster took ~15,659 seconds, which is around 4.3 hours. This might sound like a long time, but we just trained 180 models ($3^2 = 9$ combinations per model, with 10 fold Cross Validation).
 
-Following, we can see the average performance (RMSE) for each model during its k-fold runs, the metrics are shown in order of exectution, which means that the first half of values belong to the Linear Regression and the second half belong to our RandomForest runs:
+Spark's objetive is more for production rather than for model exploration, which is why identifying model's performace isn't as easy as it is in Sci-kit learn, however, it can still be done.
+
+Following, we can see the average performance (RMSE) for each model during its k-fold runs, the metrics are shown in order of exectution, which means that the first half of values belong to the Random Forest model and the second half belong to our Linear Regression runs:
 
 
 ```python
@@ -902,24 +1099,24 @@ cvModel.avgMetrics
 
 
 
-    [32.286392243926905,
-     32.095573435644056,
-     35.17196743515325,
-     32.33656064911139,
-     31.729165734444404,
-     35.34249287932781,
-     32.162478460159065,
-     31.521971344142354,
-     35.313644878669805,
-     34.485730474097906,
-     34.504544685636986,
-     34.39395018453051,
-     34.472228959937425,
-     34.50278869812698,
-     34.32380894820564,
-     34.49988623447918,
-     34.50053189994395,
-     34.49431642009493]
+    [31.425270934910127,
+     30.845918655526823,
+     34.94443101990099,
+     31.398382173733125,
+     30.81426642031701,
+     34.85703232171853,
+     31.417874346423805,
+     30.83880871086108,
+     35.210848036877124,
+     33.69249481427418,
+     33.69268537951549,
+     33.695178433419564,
+     33.69562579280449,
+     33.70458705476841,
+     33.693430289161746,
+     33.703639429397434,
+     33.72220262933084,
+     33.6949916706693]
 
 
 
@@ -935,12 +1132,26 @@ cvModel.getEstimatorParamMaps()[ np.argmin(cvModel.avgMetrics) ]
 
 
 
-    {Param(parent='Pipeline_4c42b13972143ec26f1b', name='stages', doc='a list of pipeline stages'): [RFormula_44d8bafe83a948dbe85c,
-      RandomForestRegressor_48b0b951e11bb2477066],
-     Param(parent='RandomForestRegressor_48b0b951e11bb2477066', name='numTrees', doc='Number of trees to train (>= 1).'): 15,
-     Param(parent='RandomForestRegressor_48b0b951e11bb2477066', name='featureSubsetStrategy', doc='The number of features to consider for splits at each tree node. Supported options: auto, all, onethird, sqrt, log2, (0.0-1.0], [1-n].'): '0.5'}
+    {Param(parent='Pipeline_4d63958e14f5e691468e', name='stages', doc='a list of pipeline stages'): [RFormula_42c8b8393de389d8b760,
+      RandomForestRegressor_483f833d74c3e990ce8d],
+     Param(parent='RandomForestRegressor_483f833d74c3e990ce8d', name='featureSubsetStrategy', doc='The number of features to consider for splits at each tree node. Supported options: auto, all, onethird, sqrt, log2, (0.0-1.0], [1-n].'): '0.5',
+     Param(parent='RandomForestRegressor_483f833d74c3e990ce8d', name='numTrees', doc='Number of trees to train (>= 1).'): 20}
 
 
+
+
+```python
+np.min(cvModel.avgMetrics)
+```
+
+
+
+
+    30.81426642031701
+
+
+
+The best model is a Random Forest regressor, using a subset strategy of 50% of the variables and 20 trees. It achieved an RMSE of 30.81.
 
 #### Worst performer
 
@@ -952,33 +1163,50 @@ cvModel.getEstimatorParamMaps()[ np.argmax(cvModel.avgMetrics) ]
 
 
 
-    {Param(parent='Pipeline_4c42b13972143ec26f1b', name='stages', doc='a list of pipeline stages'): [RFormula_44d8bafe83a948dbe85c,
-      RandomForestRegressor_48b0b951e11bb2477066],
-     Param(parent='RandomForestRegressor_48b0b951e11bb2477066', name='numTrees', doc='Number of trees to train (>= 1).'): 10,
-     Param(parent='RandomForestRegressor_48b0b951e11bb2477066', name='featureSubsetStrategy', doc='The number of features to consider for splits at each tree node. Supported options: auto, all, onethird, sqrt, log2, (0.0-1.0], [1-n].'): 'sqrt'}
+    {Param(parent='Pipeline_4d63958e14f5e691468e', name='stages', doc='a list of pipeline stages'): [RFormula_42c8b8393de389d8b760,
+      RandomForestRegressor_483f833d74c3e990ce8d],
+     Param(parent='RandomForestRegressor_483f833d74c3e990ce8d', name='featureSubsetStrategy', doc='The number of features to consider for splits at each tree node. Supported options: auto, all, onethird, sqrt, log2, (0.0-1.0], [1-n].'): 'sqrt',
+     Param(parent='RandomForestRegressor_483f833d74c3e990ce8d', name='numTrees', doc='Number of trees to train (>= 1).'): 30}
 
 
-
-We can also manually give the index to find out the parameters for a specific model. (Remember, the index corresponds to the avgMetrics array.
-
-#### Mid-performer
 
 
 ```python
-cvModel.getEstimatorParamMaps()[1]
+np.max(cvModel.avgMetrics)
 ```
 
 
 
 
-    {Param(parent='Pipeline_4c42b13972143ec26f1b', name='stages', doc='a list of pipeline stages'): [RFormula_44d8bafe83a948dbe85c,
-      RandomForestRegressor_48b0b951e11bb2477066],
-     Param(parent='RandomForestRegressor_48b0b951e11bb2477066', name='numTrees', doc='Number of trees to train (>= 1).'): 5,
-     Param(parent='RandomForestRegressor_48b0b951e11bb2477066', name='featureSubsetStrategy', doc='The number of features to consider for splits at each tree node. Supported options: auto, all, onethird, sqrt, log2, (0.0-1.0], [1-n].'): '0.5'}
+    35.210848036877124
 
 
 
-Finally, we can test our 'best' model from the training phase on new, unseen data:
+The worst performer was a Random Forest regressor with a subset strategy of using the square root of the number of variables and 30 trees.
+
+We can also manually give the index to find out the parameters for a specific model. (Remember, the index corresponds to the avgMetrics array.
+
+#### Best Linear Regression
+
+
+```python
+# I use 9+ argmin because we know the first 9 results are from the Random Forest iterations
+cvModel.getEstimatorParamMaps()[9 + np.argmin(cvModel.avgMetrics[8:])]
+```
+
+
+
+
+    {Param(parent='LinearRegression_4183b499386e856ec022', name='elasticNetParam', doc='the ElasticNet mixing parameter, in range [0, 1]. For alpha = 0, the penalty is an L2 penalty. For alpha = 1, it is an L1 penalty.'): 1.0,
+     Param(parent='LinearRegression_4183b499386e856ec022', name='regParam', doc='regularization parameter (>= 0).'): 0.01,
+     Param(parent='Pipeline_4d63958e14f5e691468e', name='stages', doc='a list of pipeline stages'): [RFormula_42c8b8393de389d8b760,
+      LinearRegression_4183b499386e856ec022]}
+
+
+
+The best Linear Regression model has regularization parameter 0.01 and using L1 (also known as lasso) regularization. The variance in Linear Regression performance (measured as RMSE) was minimal, with all of them being between 33.2 and 33.73.  
+
+Finally, we can test our 'best' model from the training phase on our test sample, which is new, unseen data:
 
 
 ```python
@@ -988,7 +1216,7 @@ evaluator.evaluate(cvModel.transform(test_flights))
 
 
 
-    31.529744731140976
+    31.228861151885553
 
 
 
@@ -1000,35 +1228,17 @@ cvModel.transform(test_flights).limit(10).select("label","prediction").show()
     +-----+------------------+
     |label|        prediction|
     +-----+------------------+
-    |-36.0| 2.137113818601739|
-    |-21.0| 2.137113818601739|
-    |-20.0| 2.137113818601739|
-    |-19.0| 21.48559570562177|
-    |-19.0| 2.137113818601739|
-    |-19.0| 35.30579919526348|
-    |-19.0| 2.137113818601739|
-    |-19.0|1.7944772412172914|
-    |-19.0| 2.137113818601739|
-    |-19.0| 2.137113818601739|
+    |-19.0| 28.88757275873146|
+    |-19.0| 2.462289130631162|
+    |-19.0|1.6668822768061389|
+    |-19.0|2.1210669714752477|
+    |-18.0|  1.24498749884627|
+    |-18.0| 2.462289130631162|
+    |-18.0|1.6836043331825006|
+    |-18.0|1.6991721935153794|
+    |-17.0|  1.24498749884627|
+    |-17.0| 2.462289130631162|
     +-----+------------------+
     
 
-
-
-```python
-start_time = time.time()
-evaluator.evaluate(cvModel.transform(test_flights))
-end_time = time.time()
-print("--- Magic Loop execution: %s seconds ---" % (end_time - start_time))
-```
-
-    --- Magic Loop execution: 31.72217559814453 seconds ---
-
-
-
-```python
-print("--- Magic Loop execution: %s seconds ---" % (end_time - start_time))
-```
-
-    --- Magic Loop execution: 31.72217559814453 seconds ---
-
+[Go back](../README.md)
