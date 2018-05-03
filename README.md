@@ -1,6 +1,6 @@
 ## Project Portfolio 
 
-### Projects (Striving to update this list continuously!)
+### Projects (Striving to update this list regularly!)
   
 * [Visualizing crime in Mexico City](mexico_crime/README.md)  
   
