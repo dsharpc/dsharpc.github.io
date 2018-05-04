@@ -27,7 +27,7 @@ The original files which these are built upon where written by my teacher, Erick
 
 ## Code  
 
-```C
+```c
 /*
 Sequential Stochastic Gradient Descent
 */
