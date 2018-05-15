@@ -149,9 +149,9 @@ fclose(f);
 
 // Free up memory allocated to structures
   free(values(X));
-	free(X);
-	free(values_vector(b));
-	free(b);
+  free(X);
+  free(values_vector(b));
+  free(b);
   free(values_vector(y));
   free(y);
   free(values_vector(g));
