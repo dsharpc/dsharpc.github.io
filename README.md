@@ -6,10 +6,10 @@
   
 * [Using Spark's ML library and Pipelines for Regression Models](SparkMLFlights/README.md)  
   
-* [Implementation of Stochastic Gradient Descent in C](SGD/README.md)
+* [Implementation of Stochastic Gradient Descent in CUDA](SGD/README.md)
 
 ### About me  
-My name is Daniel Sharp and I'll be concluding my Master's degree on Data Science in May 2018. I'm passionate about learning and applying new tools and methods. In this blog I will be sharing projects of my own. I'm always open to criticism and advice, so please let me know if you find any mistakes in my code or areas of improvement!  
+My name is Daniel Sharp and, after finishing my Masters Degree on Data Science, I decided to move from Mexico to London. I'm passionate about learning and applying new tools and methods. In this blog I will be sharing projects of my own. I'm always open to criticism and advice, so please let me know if you find any mistakes in my code or areas of improvement! You can use the issues section [here](https://github.com/dsharpc/dsharpc.github.io/issues)   
   
   I have experience in the following tools and subjects:  
   
