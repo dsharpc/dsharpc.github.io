@@ -1,4 +1,4 @@
-### C implementation of Stochastic Gradient Descent  
+### Implementation of Stochastic Gradient Descent in CUDA 
 
 Stochastic Gradient Descent is one of the most basic algorithms in Machine Learning, it is used as a model training method which allows the model to adjust its parameters through a number of iterations. The way this works is by creating a convex cost function, then we can 'descend' through its curve until we reach the global minimum. The cost function used depends on the problem (regression vs classification, for example). However, the objetive of this project is not to explain how Gradient Descent works, especially if we can learn it straight from [Stanford](http://ufldl.stanford.edu/tutorial/supervised/OptimizationStochasticGradientDescent/).  
 
